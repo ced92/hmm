@@ -148,7 +148,7 @@ class HMM():
             return self.prob_observe * self.evidence_matrix[current_state][current_observation-1]
 
     def forward(self, prev_forwards, observations): #TODO: Change this so we dont condition on particular Z_K
-        """  Calculates the forward f_k(h) := p(O_(1:K), Z_K = h) for K > 1
+        """  Calculates the forward f_k(h) := p(O_(2:K), Z_K = h) for K > 1
 
         Variables:
             current_state: An integer representing the current state of hidden variable Z at time K. {0,1}
@@ -314,6 +314,7 @@ class HMM():
         return future_tablesum
 
     def _intermediate_prob(self, current_state, current_node, target_sum ,prev_tablesum, transition_matrix, evidence_matrix):
+        # (state, current_node, target_sum, prev_tablesum, transition_matrix, evidence_matrix)
         total_prob_sum = 0
         for prev_state in range(self.num_states):
             # Loop over all possible sums in previous state
@@ -418,12 +419,119 @@ class HMM():
         # 3 - Multiply all values and return
         return forward_value * emission_value * backward_value * sum_value
 
-#     def prob_of_sum(observed_sum, observations):
-#         # Remove certain observations and find their sum
-#         certain_values = list(filter(lambda x: x != -1, observations))
-#         uncertain_sum = observed_sum - sum(certain_values)
-#         num_uncertainties = len(observations) - len(certain_values)
+    def prob_sum_alt(self, current_node, prev_tablesum, observations_list, z_list):
+        transition_matrix = copy.deepcopy(self.transition_matrix)
+        evidence_matrix = copy.deepcopy(self.evidence_matrix)
 
-#         # Now run Dynamic Programming algorithm/Recursive...
-#         time_step = 1
-#         prev_sum = summ(time_step, num_uncertainties, uncertain_sum)
+        observation = observations_list.pop()
+        z_k = z_list.pop()
+        # Perform two Checks
+        if (z_k != -1): # Adjust transition probabilities
+            given_state = z_k
+            other_state = (given_state + 1) % 2
+            for state in range(self.num_states):
+                transition_matrix[state][given_state] = 1
+                transition_matrix[state][other_state] = 0
+        if (observation != -1): # Adjust evidences
+            evidences = [0]*6
+            evidences[observation-1] = 1
+            for state in range(self.num_states):
+                evidence_matrix[state] = evidences
+
+        # Calculate sums
+        current_tablesum = np.empty([self.num_states, current_node*6 - current_node + 1])
+        for state in range(self.num_states):
+            for target_sum in range(current_node, current_node*6+1):
+                target_sum_index = target_sum - current_node
+                prob = self._intermediate_prob(state, current_node, target_sum, prev_tablesum, transition_matrix, evidence_matrix)
+                current_tablesum[state][target_sum_index] = prob
+
+        # We are done.
+        if (len(observations_list) == 0):
+            return current_tablesum
+
+        # Otherwise recurse forward
+        future_tablesum = self.prob_sum_alt(current_node+1, current_tablesum, observations_list, z_list)
+        return future_tablesum
+
+    def find_sum(self, observed_sum, observations_list, z_list):
+        """ Calculates P(Sum_k | O_1:k, Zks)
+
+        Variables:
+            observed_sum: Sum that we are interested in
+            final_node: Integer value representing how many time steps to consider
+            observations_list: List of observations from time period 1:K.
+            z_list: List of states Z_k
+            z_k: Triplet in form (k, z_k, x_k). k specifying time step, z_k state of node z_k and x_k the outcome at time step k.
+        """
+        # Basic checks.
+        if (final_node > len(observations_list)):
+            print('Error in input. Value of final_node: {0} > total number of nodes: {1}'.format(final_node, len(observations_list)))
+            return
+        if (z_k[0] > len(observations_list)) or (z_k[0] < 1):
+            print('Value of k in z_k triple must be between 1 and T')
+            return
+        if (z_k[1] > 1) or (z_k[1] < 0):
+            print('Value of z_k was : {} but must be between 0 and 1'.format(z_k[1]))
+            return
+
+        num_nodes = len(observations_list)
+        if (observed_sum < num_nodes) or (observed_sum > num_nodes*6):
+            return 0
+
+        observations_list.reverse()
+        z_list.reverse()
+        observation_k = observations_list.pop() # Pop last element which is now first from reverse
+        z_k = z_list.pop()
+
+        # Initialize algorithm
+        init_tablesum = copy.deepcopy(self.evidence_matrix) # Make deepcopy
+        if (observation_k != -1): # O_k = {1,2,...,6}
+            for state in range(self.num_states):
+                evidences = [0]*6
+                evidences[observation_k-1] = 1
+                init_tablesum[state] = evidences
+        if (z_k != -1): # z_k = {0,1}
+            other_state = (z_k + 1) % 2
+            init_tablesum[other_state] = [0]*6
+        else: # z_k = ?
+            for state in range(self.num_states): # Include transition probabilities
+                init_tablesum[state] = [x * self.starting_prior[state] for x in init_tablesum[state]]
+
+        if len(observations_list == 0):
+            tablesum = init_tablesum
+        else:
+            current_node = 2
+            tablesum = self.prob_sum_alt(current_node, init_tablesum, observations_list, z_list)
+
+        sum_index = observed_sum - num_nodes
+        prob_table = np.zeros(self.num_states)
+        prob_table[:] = tablesum[:][sum_index]
+        return prob_table
+        # Returns prob(S = 18 | Z = 0) and prob(S=18 | Z=1)
+
+        def sample_z_k(z_k, observations_list, observed_sum):
+            """"Calculates p(z_k | S, O_1:k)
+            args:
+                z_k: Tuple (k, value) representing state of z_k ## change to dict?
+                observations_list: List of observations 1:K
+            """"
+            k, target_state = z_k
+            probability_table = np.zeros(self.num_states) # z_k has two states
+
+            # Get p(S=J | Z_k, O_1:k) table
+            observations_list_cp = copy.deepcopy(observations_list)
+            z_list = [-1 for x in observations_list_cp]
+            z_list[k] = z_value
+            tablesum = self.find_sum(observed_sum, observations_list_cp, z_list)
+
+            for state in range(self.num_states):
+                # Calculate alpha_z_k
+                observations_list_cp = copy.deepcopy(observations_list)
+                observation_k = observations_list_cp.pop()
+                forward_value = self.semi_forward(observations_list_cp, state)
+                prob_observation_k = self.prob_observation(observation_k, state)
+                alpha_k = forward_value * prob_observation_k
+                probability_table[state] = alpha_k * tablesum[state]
+
+            return probability_table[target_state] / np.sum(probability_table)

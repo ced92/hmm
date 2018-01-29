@@ -510,28 +510,42 @@ class HMM():
         return prob_table
         # Returns prob(S = 18 | Z = 0) and prob(S=18 | Z=1)
 
-        def sample_z_k(z_k, observations_list, observed_sum):
-            """"Calculates p(z_k | S, O_1:k)
+        def sample_z_k(z_list, observations_list, observed_sum):
+            """"Samples from distribution: p(z_k | S, O_1:k)
             args:
                 z_k: Tuple (k, value) representing state of z_k ## change to dict?
                 observations_list: List of observations 1:K
             """"
-            k, target_state = z_k
-            probability_table = np.zeros(self.num_states) # z_k has two states
+            k = -1
+            for i in range(-1, -1 * len(z_list)):
+                if z_list[i] == -1:
+                    k = i
+                    break
 
-            # Get p(S=J | Z_k, O_1:k) table
-            observations_list_cp = copy.deepcopy(observations_list)
-            z_list = [-1 for x in observations_list_cp]
-            z_list[k] = z_value
-            tablesum = self.find_sum(observed_sum, observations_list_cp, z_list)
-
+            probability_table = np.zeros(self.num_states)
             for state in range(self.num_states):
+                observations_list_cp = copy.deepcopy(observations_list)
+                z_list[k] = state
+                prob_sum = self.find_sum(observed_sum, observations_list_cp, z_list)[state]
+
                 # Calculate alpha_z_k
                 observations_list_cp = copy.deepcopy(observations_list)
                 observation_k = observations_list_cp.pop()
                 forward_value = self.semi_forward(observations_list_cp, state)
                 prob_observation_k = self.prob_observation(observation_k, state)
                 alpha_k = forward_value * prob_observation_k
-                probability_table[state] = alpha_k * tablesum[state]
+                probability_table[state] = alpha_k * prob_sum
 
-            return probability_table[target_state] / np.sum(probability_table)
+            # Normalize
+            probability_table = probability_table / np.sum(probability_table)
+
+            # Sample
+            state = np.random.multinomial(1, probability_table)
+            z_k = np.argmax(state)
+            z_list[k] = z_k
+            return z_list
+
+        def sample_states(observations_list, observed_sum):
+            # Initialize
+            z_list = [-1 for x in observations_list]
+            z_list = sample_z_k(z_list, observations_list, observed_sum)

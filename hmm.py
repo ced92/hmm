@@ -525,27 +525,50 @@ class HMM():
             probability_table = np.zeros(self.num_states)
             for state in range(self.num_states):
                 observations_list_cp = copy.deepcopy(observations_list)
+                ## Partition observation List into two depending on k
+                current_observation = observations_list_cp[k]
+                past_observations = observations_list_cp[:k]
+                if k + 1 == 0:
+                    future_observations = []
+                else:
+                    future_observations = observations_list_cp[k+1:]
+
+                # Calculate prob. sum
                 z_list[k] = state
                 prob_sum = self.find_sum(observed_sum, observations_list_cp, z_list)[state]
 
                 # Calculate alpha_z_k
-                observations_list_cp = copy.deepcopy(observations_list)
-                observation_k = observations_list_cp.pop()
-                forward_value = self.semi_forward(observations_list_cp, state)
-                prob_observation_k = self.prob_observation(observation_k, state)
+                forward_value = self.semi_forward(past_observations, state) # check what it returns...
+                prob_observation_k = self.prob_observation(current_observation, state)
                 alpha_k = forward_value * prob_observation_k
-                probability_table[state] = alpha_k * prob_sum
+
+                # Calculate futures (if there are any)
+                future_prob = 1
+                prev_state = state
+                if len(future_observations) != 0:
+                    for i in range(len(future_observations)):
+                        future_obs = future_observations[i]
+                        future_state = z_list[k+i+1]
+                        prob_observation = self.prob_observation(future_obs, future_state)
+                        transition_prob = self.transition_matrix[prev_state][future_state]
+
+                        future_prob *= prob_observation * transition_prob
+                        prev_state = future_state
+
+                probability_table[state] = alpha_k * prob_sum * future_prob
 
             # Normalize
-            probability_table = probability_table / np.sum(probability_table)
+            condit_prob = probability_table / np.sum(probability_table)
 
             # Sample
-            state = np.random.multinomial(1, probability_table)
+            state = np.random.multinomial(1, condit_prob)
             z_k = np.argmax(state)
             z_list[k] = z_k
             return z_list
 
         def sample_states(observations_list, observed_sum):
-            # Initialize
             z_list = [-1 for x in observations_list]
-            z_list = sample_z_k(z_list, observations_list, observed_sum)
+            for i in range(len(z_list)):
+                z_list = sample_z_k(z_list, observations_list, observed_sum)
+
+            return z_list

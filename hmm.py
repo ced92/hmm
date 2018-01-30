@@ -595,18 +595,22 @@ class HMM():
 
         # Sample
         logging.debug("Cond prob table: {}".format(condit_prob))
-        sampled_state = np.random.multinomial(1, condit_prob)
-        logging.debug("State sample: {}".format(sampled_state))
-
-        z_k = np.argmax(sampled_state)
+        # # sampled_state = np.random.multinomial(1, condit_prob)
+        # logging.debug("State sample: {}".format(sampled_state))
+        # # z_k = np.argmax(sampled_state)
+        z_k = np.argmax(condit_prob) # Choose most likely state
         logging.debug("Sampled Z_K: {}".format(z_k))
         z_list[k] = z_k
-        return z_list
+        return z_list, condit_prob
 
     def sample_states(self, observations_list, observed_sum):
         z_list = [-1 for x in observations_list]
+        prob_list = []
         for i in range(len(z_list)):
             logging.info('Z_LIST is: {}'.format(z_list))
-            z_list = self.sample_z_k(z_list, observations_list, observed_sum)
+            z_list, prob_table = self.sample_z_k(z_list, observations_list, observed_sum)
+            prob_list.append(prob_table)
+            logging.info('PROB LIST is: {}'.format(prob_list))
 
-        return z_list
+        prob_list.reverse()
+        return z_list, prob_list

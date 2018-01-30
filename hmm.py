@@ -1,6 +1,8 @@
 
 import numpy as np
 import copy
+import logging
+logging.basicConfig(level=logging.CRITICAL, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class HMM():
     """ Class Representing HMM for Casino model
@@ -32,7 +34,7 @@ class HMM():
         state = np.random.multinomial(1, self.starting_prior)
         self.state = np.argmax(state)
         self.time_step = 1
-        print('Starting State: {}'.format(self.state))
+        logging.info('Starting State: {}'.format(self.state))
 
     def sample_observation(self):
         """Samples an observation from current state"""
@@ -225,13 +227,13 @@ class HMM():
         """
         # Basic checks.
         if (final_node > len(observations_list)):
-            print('Error in input. Value of final_node: {0} > total number of nodes: {1}'.format(final_node, len(observations_list)))
+            logging.warning('Error in input. Value of final_node: {0} > total number of nodes: {1}'.format(final_node, len(observations_list)))
             return
         if (z_k[0] > len(observations_list)) or (z_k[0] < 1):
-            print('Value of k in z_k triple must be between 1 and T')
+            logging.warning('Value of k in z_k triple must be between 1 and T')
             return
         if (z_k[1] > 1) or (z_k[1] < 0):
-            print('Value of z_k was : {} but must be between 0 and 1'.format(z_k[1]))
+            logging.warning('Value of z_k was : {} but must be between 0 and 1'.format(z_k[1]))
             return
 
         observations_list.reverse()
@@ -355,7 +357,7 @@ class HMM():
         for state in range(self.num_states):
             for x in range(1,7):
                 result = self._calculate_joint(x,state,k,s,observations_list)
-                print('Result for state {}, dice {} is : {}'.format(state,x,result))
+                logging.debug('Result for state {}, dice {} is : {}'.format(state,x,result))
                 prob_table[state, x-1] = result
                 total_sum += result
 #                 if (x == x_k) and (state == z_k):
@@ -395,16 +397,16 @@ class HMM():
 #         print('Current obs: {}'.format(current_observation))
 
         # 2 - Run all algorithms seperately
-        print('Past obs: {}'.format(past_observations))
-        print('Target_state = {}'.format(z_k))
+        logging.debug('Past obs: {}'.format(past_observations))
+        logging.debug('Target_state = {}'.format(z_k))
         forward_value = self.semi_forward(observations=past_observations, target_state=z_k)
         backward_value = 1
         if len(future_observations) != 0:
             backward_value = self.backward(observations=future_observations, future_backward=[1,1], target_state=z_k)
 
 #         print(current_observation)
-        print('Target_observation = {}'.format(current_observation))
-        print('Target_evidence = {}'.format(x_k))
+        logging.debug('Target_observation = {}'.format(current_observation))
+        logging.debug('Target_evidence = {}'.format(x_k))
 
         emission_value = self.emmission(target_observation=current_observation, target_evidence=x_k, target_state=z_k)
 #         target_observation, target_evidence, target_state
@@ -412,10 +414,10 @@ class HMM():
         sum_value = self.find_prob_sum(observed_sum=s, final_node=len(observations_list),
                                        observations_list=copy.deepcopy(observations_list), z_k=(k, z_k, x_k))
 
-        print('Sum_value is : {}'.format(sum_value))
-        print('Emission Value is: {}'.format(emission_value))
-        print('Backward value is : {}'.format(backward_value))
-        print('Forward Value is : {}'.format(forward_value))
+        logging.info('Sum_value is : {}'.format(sum_value))
+        logging.info('Emission Value is: {}'.format(emission_value))
+        logging.info('Backward value is : {}'.format(backward_value))
+        logging.info('Forward Value is : {}'.format(forward_value))
         # 3 - Multiply all values and return
         return forward_value * emission_value * backward_value * sum_value
 
@@ -425,14 +427,14 @@ class HMM():
 
         observation = observations_list.pop()
         z_k = z_list.pop()
-        print("Remaining Z_List : {}".format(z_list))
-        print("Remaining Obs: {}".format(observation))
+        logging.debug("Remaining Z_List : {}".format(z_list))
+        logging.debug("Remaining Obs: {}".format(observation))
         # Perform two Checks
         if (z_k != -1): # Adjust transition probabilities
             given_state = z_k
             other_state = (given_state + 1) % 2
-            print("Given state: {}".format(z_k))
-            print("Other state: {}".format(other_state))
+            logging.debug("Given state: {}".format(z_k))
+            logging.debug("Other state: {}".format(other_state))
 
             for state in range(self.num_states):
                 transition_matrix[state][given_state] = 1
@@ -442,8 +444,8 @@ class HMM():
             evidences[observation-1] = 1
             for state in range(self.num_states):
                 evidence_matrix[state] = evidences
-        print("Observation: {}".format(observation))
-        print("Evidence matrix: {}".format(evidence_matrix))
+        logging.debug("Observation: {}".format(observation))
+        logging.debug("Evidence matrix: {}".format(evidence_matrix))
 
         # Calculate sums
         current_tablesum = np.empty([self.num_states, current_node*6 - current_node + 1])
@@ -453,10 +455,10 @@ class HMM():
                 prob = self._intermediate_prob(state, current_node, target_sum, prev_tablesum, transition_matrix, evidence_matrix)
                 current_tablesum[state][target_sum_index] = prob
 
-        print("Current table sum: {}".format(current_tablesum))
+        logging.debug("Current table sum: {}".format(current_tablesum))
         # We are done.
         if (len(observations_list) == 0):
-            print("######### DONE #######")
+            logging.debug("######### DONE #######")
             return current_tablesum
 
         # Otherwise recurse forward
@@ -496,8 +498,8 @@ class HMM():
 
         # Initialize algorithm
         init_tablesum = copy.deepcopy(self.evidence_matrix) # Make deepcopy
-        print('#'*20)
-        print("Init Tablesum: {}".format(init_tablesum))
+        logging.debug('#'*20)
+        logging.debug("Init Tablesum: {}".format(init_tablesum))
         if (observation_k != -1): # O_k = {1,2,...,6}
             for state in range(self.num_states):
                 evidences = [0]*6
@@ -514,14 +516,14 @@ class HMM():
             tablesum = init_tablesum
         else:
             current_node = 2
-            print("Tablesum before entering sum_alt_table: {}".format(init_tablesum))
+            logging.debug("Tablesum before entering sum_alt_table: {}".format(init_tablesum))
             tablesum = self.prob_sum_alt(current_node, init_tablesum, observations_list, z_list)
 
         sum_index = observed_sum - num_nodes
         # prob_table = np.zeros(self.num_states)
-        print("Table sum shape {} and {}".format(tablesum.shape, tablesum))
-        print("Sum_index is: {}".format(sum_index))
-        print('#'*20)
+        logging.debug("Table sum shape {} and {}".format(tablesum.shape, tablesum))
+        logging.debug("Sum_index is: {}".format(sum_index))
+        logging.debug('#'*20)
         # prob_table[0] = tablesum[0][sum_index]
         # prob_table[1] = tablesum[1][sum_index]
 
@@ -541,9 +543,9 @@ class HMM():
         """
         k = -1
         for i in range(1, len(z_list)+1):
-            print(-i)
+            logging.debug(-i)
             if z_list[-i] == -1:
-                print("Success: {}".format(i))
+                logging.debug("Success: {}".format(i))
                 k = -i
                 break
 
@@ -560,8 +562,8 @@ class HMM():
 
             # Calculate prob. sum
             z_list[k] = state
-            print('K is: {}'.format(k))
-            print("Z_list is: {}".format(z_list))
+            logging.debug('K is: {}'.format(k))
+            logging.debug("Z_list is: {}".format(z_list))
             prob_sum = self.find_sum(observed_sum, observations_list_cp, copy.deepcopy(z_list))
 
             # Calculate alpha_z_k
@@ -582,29 +584,29 @@ class HMM():
                     future_prob *= prob_observation * transition_prob
                     prev_state = future_state
 
-            print("alpha_k : {}".format(alpha_k))
-            print("prob_sum: {}".format(prob_sum))
-            print("future_prob: {}".format(future_prob))
+            logging.debug("alpha_k : {}".format(alpha_k))
+            logging.debug("prob_sum: {}".format(prob_sum))
+            logging.debug("future_prob: {}".format(future_prob))
             probability_table[state] = alpha_k * prob_sum * future_prob
 
         # Normalize
-        print("Un-normalized prob table: {}".format(probability_table))
+        logging.debug("Un-normalized prob table: {}".format(probability_table))
         condit_prob = probability_table / np.sum(probability_table)
 
         # Sample
-        print("Cond prob table: {}".format(condit_prob))
+        logging.debug("Cond prob table: {}".format(condit_prob))
         sampled_state = np.random.multinomial(1, condit_prob)
-        print("State sample: {}".format(sampled_state))
+        logging.debug("State sample: {}".format(sampled_state))
 
         z_k = np.argmax(sampled_state)
-        print("Sampled Z_K: {}".format(z_k))
+        logging.debug("Sampled Z_K: {}".format(z_k))
         z_list[k] = z_k
         return z_list
 
     def sample_states(self, observations_list, observed_sum):
         z_list = [-1 for x in observations_list]
         for i in range(len(z_list)):
-            print('Z_LIST is: {}'.format(z_list))
+            logging.info('Z_LIST is: {}'.format(z_list))
             z_list = self.sample_z_k(z_list, observations_list, observed_sum)
 
         return z_list

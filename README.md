@@ -10,3 +10,5 @@ the goal is then to calculate probabilities of vairous events.
 Observation Sequence: 5,1,-1,-1,4 (-1 implies not observed)
 
 Observed Sum: 14
+
+__Examples of the algorithms in action can be found in the Jupyter Notebook.__

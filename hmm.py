@@ -1,78 +1,87 @@
+"""Hidden markov model module.
+
+This module implements logic related to hidden markov models. In particular
+it deals with the type of casino model described in section 2.2 of
+assignment 2.
+"""
+
+__author__ = 'Cedric Seger'
 
 import numpy as np
 import copy
 import logging
-logging.basicConfig(level=logging.CRITICAL, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 class HMM():
-    """ Class Representing HMM for Casino model
-    Args:
-        starting_prior: List of probabilities over each state (eg. [1/2, 1/2])
-        dice_dist1: List of prob. for each outcome of dice in table group 1 (eg. [1/12]*4 + [2/6]*2)
-        dice_dist1: List of prob. for each outcome of dice in table group 2
-        transition_dist: list of probabilities that represents HMM transitioning table
-        prob_observe: Prob. of observing outcome at time_step K
-    """
-    def __init__(self, starting_prior, dice_dist1, dice_dist2, transition_matrix, prob_observe):
-        self.starting_prior = starting_prior
-        self.dice_dist1 = dice_dist1
-        self.dice_dist2 = dice_dist2
-        self.transition_matrix = transition_matrix
-        self.evidence_matrix = [dice_dist1, dice_dist2]
-        self.num_states = len(starting_prior)
+    """Implements logic for a hidden markov model (HMM).
 
+    Parameters
+    ----------
+    starting_prior : list
+        List containing the starting priors for each state.
+    evidence_matrix : 2D array
+        List of lists specifying the categorical distributions for each table
+        group.
+    transition_matrix : 2D array
+        List of lists representing the HMM transition table.
+    prob_observe : float
+        Number representing the probability of observing an outcome.
+    """
+    def __init__(self, starting_prior, evidence_matrix,
+                 transition_matrix, prob_observe):
+        self.starting_prior = starting_prior
+        self.transition_matrix = transition_matrix
+        self.evidence_matrix = evidence_matrix
+        self.num_states = len(starting_prior)
         self.prob_observe = prob_observe
         self.state = None
         self.time_step = None
         self.actual_outcomes = []
-        self.observed_outcomes = [] # We do not get to observe all outcomes...
-
-        self.sample_starting_state() # INIT
+        self.observed_outcomes = []
+        self.sample_starting_state()
 
     def sample_starting_state(self):
-        """Generates starting state of model"""
+        """Generates a new starting state for casino model."""
         state = np.random.multinomial(1, self.starting_prior)
         self.state = np.argmax(state)
         self.time_step = 1
         logging.info('Starting State: {}'.format(self.state))
 
     def sample_observation(self):
-        """Samples an observation from current state"""
-        observation = np.random.multinomial(1, self.evidence_matrix[self.state])
-        return np.argmax(observation) + 1 # Add 1 so that observations starts from 1...6
+        """Samples an observation from current state."""
+        observation = np.random.multinomial(
+            1, self.evidence_matrix[self.state])
+        # Add 1 so that observations are in range (1...6)
+        return np.argmax(observation) + 1
 
     def transition(self):
-        """Generates next state based on transition table"""
-        next_state = np.random.multinomial(1, self.transition_matrix[self.state])
+        """Generates next state based on transition table and current state."""
+        next_state = np.random.multinomial(
+            1, self.transition_matrix[self.state])
         self.state = np.argmax(next_state)
         self.time_step += 1
 
-
     def run(self):
-        """Runs one iteration of main loop (Sample -> Transition + Store Information)"""
-        # Sample
+        """Convenenience method for sampling an observation and next state."""
         observation = self.sample_observation()
         self.actual_outcomes.append(observation)
-
-        # Store information
-        if np.random.uniform(0,1) <= self.prob_observe:
-            # We get to "observe" the observation
+        if np.random.uniform(0, 1) <= self.prob_observe:
             self.observed_outcomes.append(observation)
         else:
             # We do not get to observe outcome, represent as (-1)
             self.observed_outcomes.append(-1)
-
-        # Next State
         self.transition()
 
     def reset(self):
+        """Resets state and other information of current markov model."""
         self.state = None
         self.time_step = None
         self.actual_outcomes = []
         self.observed_outcomes = []
-        self.sample_starting_state() # INIT
+        self.sample_starting_state()
 
     def print_info(self):
+        """Prints information that describes the HMM sampling sequence."""
         print('')
         print('### INFO FOR HMM ###')
         print('Time Step: {}'.format(self.time_step))
@@ -80,560 +89,416 @@ class HMM():
         print('Observed Outcomes: {}'.format(self.observed_outcomes))
         print('Actual Outcomes: {}'.format(self.actual_outcomes))
 
+    def _semi_forward(self, observations, target_state):
+        """Calculates the joint probability of past observations and a state.
 
-    #### METHODS FOR Algorithms ####
+        Finds the probability p(O_{1:k-1}, z_k), that is the joint probability
+        of past observations from step 1 to k and the current state of node
+        k, z_k.
 
-    def semi_forward(self, observations, target_state):
-        """ Calculates: prob(O_(1:K-1), Z_K = h)
-
-        Variables:
-            target_state: An integer representing the current state of hidden variable Z at time K. {0,1}
-            observations: List of observations from time period 1:K-1. K being the current time step.
+        Parameters
+        ----------
+        observations : list
+            List of observations from time period 1:k.
+        target_state : int
+            The state of node k. Can be either 0 or 1.
         """
-        # Only the case when the node (Z_k) corresponds to the first node i.e. Z_1
-        # Then just return prob(Z_k) since we have no observations before Z_1
         if len(observations) == 0:
             return self.starting_prior[target_state]
-
-        # Else, we must have at least one observation. This implies k >= 2.
-        observations.reverse() # Reverse so that we can pop from end of list corresponding to first time step
-        # print('Reversed observations: {}'.format(observations))
-        forward = self.forward_init(observations.pop()) # Get initial starting condition for forward
-        # print('Init forward value: {}'.format(forward))
-
+        observations.reverse()
+        forward = self._forward_init(observations.pop())
         if len(observations) != 0:
-            # print('We are recursing...')
-            forward = self.forward(forward, observations) # Returns array of length = num_hidden_states
-
-        # print('Final Forward values: {}'.format(forward))
+            forward = self.forward(forward, observations)
         total_sum = 0
-        for prev_state in range(self.num_states): # Sum over all previous states
+        for prev_state in range(self.num_states):
             transition_prob = self.transition_matrix[prev_state][target_state]
             total_sum += forward[prev_state] * transition_prob
-
         return total_sum
 
-
-    def forward_init(self, first_observation):
-        forwards = np.empty(self.num_states) # Array to hold values for each state
-        for state in range(self.num_states): # Loop through each state
+    def _forward_init(self, first_observation):
+        forwards = np.empty(self.num_states)
+        for state in range(self.num_states):
             evidence_prob = self.prob_observation(first_observation, state)
             forwards[state] = evidence_prob * self.starting_prior[state]
-
         return forwards
 
-    # def emmission(self, target_observation, target_evidence, target_state):
-    #     """ Calculates prob: p(O_k = o, X_k = x | Z_k = t)
-    #
-    #     """
-    #     # Case that cannot happen. I.e. O_k = 5 and X_k = 1 are mutually exclusive events
-    #     if (target_observation != -1) and (target_observation != target_evidence):
-    #         logging.debug('Emission O_K != Evidence X_K -> All prob will be zero')
-    #         return 0
-    #
-    #     prob = self.prob_observation(target_observation, target_state)
-    #     return prob
-    #
-    #     #
-    #     # prob_evidence = self.evidence_matrix[target_state][target_evidence-1]
-    #     # if target_observation == -1: # Unobserved outcome
-    #     #     return prob_evidence * (1 - self.prob_observe)
-    #     # else: # Outcome is observed
-    #     #     return prob_evidence * self.prob_observe
-
     def prob_observation(self, current_observation, current_state):
-        """ Calculates P(O_k | Z_k)
+        """Calculates the probability of an observation given a state.
 
-        Variables:
-            current_observation: Integer in range (1,6) representing observation from hidden state
-            current_state: Integer in range (0,1) representing the state of latent variable
+        Corresponds to calculating the probability: p(O_k | z_k).
+
+        Parameters
+        ----------
+        current_observation : int
+            Integer in range (-1,1-6). -1 implies that the observation is
+            hidden.
+        current_state : int
+            State of latent variable z_k. Either 0 or 1.
         """
-        # Int: -1 represents an "unobserved" observation
         if current_observation == -1:
             return 1 - self.prob_observe
-        else: # Observations are from 1 to 6 but index runs from 0...5
-            return self.prob_observe * self.evidence_matrix[current_state][current_observation-1]
+        else:  # Observations are from 1 to 6 but index runs from 0...5
+            return (
+                self.prob_observe
+                * self.evidence_matrix[current_state][current_observation-1])
 
-    def forward(self, prev_forwards, observations): #TODO: Change this so we dont condition on particular Z_K
-        """  Calculates the forward f_k(h) := p(O_(2:K), Z_K = h) for K > 1
+    def forward(self, prev_forwards, observations):
+        """Calculates the value of the forward table.
 
-        Variables:
-            current_state: An integer representing the current state of hidden variable Z at time K. {0,1}
-            observations: List of observations from time period 1:K. K being the current time.
+        The forward is the joint probability: p(O_{2:k}, z_k) for k > 1.
+        The function calculates this value recursively, in polynomial time.
+
+        Parameters
+        ----------
+        prev_forwards : list
+            Table of forwards from a previous time step.
+        observations : list
+            List of integers representing observations at nodes.
+
+        Returns:
+            Table that specifies the forward values for different states
+            of variable z_k.
         """
-
-        current_observation = observations.pop() # Removes and returns last element of list
-        # print('Popped observation: {}'.format(current_observation))
-        # print('Remaining observations: {}'.format(observations))
-        # print('Upon entering... prev_forwards is : {}'.format(prev_forwards))
-        current_forward = np.empty(self.num_states) # To hold current forward values
-
-        for current_state in range(self.num_states): # Loop through each current state
-            evidence_prob = self.prob_observation(current_observation, current_state)
-            # print('prob of {} in state {} is: {}'.format(current_observation,current_state,evidence_prob))
-
+        current_observation = observations.pop()
+        current_forward = np.empty(self.num_states)
+        for current_state in range(self.num_states):
+            evidence_prob = self.prob_observation(
+                current_observation, current_state)
             total_sum = 0
-            for prev_state in range(self.num_states): # Sum over all previous states
-                transition_prob = self.transition_matrix[prev_state][current_state]
-                # print('prob of {} -> {} is: {}'.format(prev_state,current_state,transition_prob))
+            for prev_state in range(self.num_states):
+                transition_prob = (
+                    self.transition_matrix[prev_state][current_state])
                 total_sum += prev_forwards[prev_state] * transition_prob
-
-            # print('Total sum is : {}'.format(total_sum))
-            # Update current_forward value
             current_forward[current_state] = evidence_prob * total_sum
-
-        # print('Current_forward is : {}'.format(current_forward))
-
-        # We have forwarded through all time steps until K-1
         if (len(observations) == 0):
             return current_forward
-
-        future_forward = self.forward(current_forward, observations) # Recursive call moving forward
-
-        # Return to top of calling stack
+        future_forward = self.forward(current_forward, observations)
         return future_forward
 
-
     def backward(self, observations, future_backward, target_state):
-        """  Calculates the backward f_k(Z) := p(O_(K+1:T)| Z_K)
+        """Calculates the value of the backward.
 
-        Variables:
-            future_backward: The backward value from a future state. Originally set to vector of ones.
-            observations: List of observations from time period K+1:T. K being the current time step and T the final.
+        The backward corresponds to finding the probability of a sequence of
+        future observations given a state at time k. Formally, this can be
+        written as the probability: p(O_(k+1:T)| z_k).
+
+        Parameters
+        ----------
+        observations : list
+            List of observations from time period K+1:T. T being the final
+            time step (or node) in the sampling sequence.
+        future_backward : list
+            The backward value from a future state.
+            Originally set to a list of ones.
+        target_state : int
+            The state of the node of interest.
         """
         current_backward = np.empty(self.num_states)
         future_observation = observations.pop()
-
         for current_state in range(self.num_states):
             total_sum = 0
             for future_state in range(self.num_states):
-                transition_prob = self.transition_matrix[current_state][future_state]
-                future_evidence = self.prob_observation(future_observation, future_state)
-                total_sum += transition_prob * future_evidence * future_backward[future_state]
-
-            # Update current_backward value
+                transition_prob = (
+                    self.transition_matrix[current_state][future_state])
+                future_evidence = self.prob_observation(
+                    future_observation, future_state)
+                total_sum += (transition_prob
+                              * future_evidence
+                              * future_backward[future_state])
             current_backward[current_state] = total_sum
-
-        # If there are observations left, keep recursing...
         if len(observations) != 0:
             return self.backward(observations, current_backward, target_state)
-
-        # Else we are done, lets return appropriate value to caller...
+        # Else we are done
         return current_backward[target_state]
 
-#     def find_prob_sum(self, observed_sum, final_node, observations_list, z_k):
-#         """ Calculates P(Sum_k = observed_sum) I.e. that the sum of k dices is observed_sum
-#
-#         Variables:
-#             observed_sum: Sum that we are interested in
-#             final_node: Integer value representing how many time steps to consider
-#             observations_list: List of observations from time period 1:T.
-#             z_k: Triplet in form (k, z_k, x_k). k specifying time step, z_k state of node z_k and x_k the outcome at time step k.
-#         """
-#         # Basic checks.
-#         if (final_node > len(observations_list)):
-#             logging.warning('Error in input. Value of final_node: {0} > total number of nodes: {1}'.format(final_node, len(observations_list)))
-#             return
-#         if (z_k[0] > len(observations_list)) or (z_k[0] < 1):
-#             logging.warning('Value of k in z_k triple must be between 1 and T')
-#             return
-#         if (z_k[1] > 1) or (z_k[1] < 0):
-#             logging.warning('Value of z_k was : {} but must be between 0 and 1'.format(z_k[1]))
-#             return
-#
-#         observations_list.reverse()
-#         observation = observations_list.pop() # Pop last element which is now first from reverse
-#         init_tablesum = copy.deepcopy(self.evidence_matrix) # Make deepcopy
-#
-#         # Adjust init table-sum accordingly. Before main recursion begins.
-#         if (z_k[0] == 1): # If it is specified that this node is given info z_k
-#             for state in range(self.num_states):
-#                 evidences = [0]*6
-#                 evidences[z_k[2]-1] = 1
-#                 init_tablesum[state] = evidences
-#                 if(state != z_k[1]):
-#                     init_tablesum[state] = [0]*6
-# #             print('Adjusted evidence: {}'.format(evidences))
-#         else:
-#             if (observation != -1): # I.e. O_1 = 2 (observed outcome)
-#                 for state in range(self.num_states):
-#                     evidences = [0]*6
-#                     evidences[observation-1] = 1
-#                     init_tablesum[state] = evidences
-# #                 print('Adjusted evidence: {}'.format(evidences))
-#
-#             for state in range(self.num_states):
-#                 init_tablesum[state] = [x * self.starting_prior[state] for x in init_tablesum[state]]
-#
-#         if final_node == 1:
-#             tablesum = init_tablesum
-#         else:
-#             # Else run algorithm...
-#             current_node = 2
-#             tablesum = self.prob_sum(observed_sum, current_node, final_node, init_tablesum, observations_list, z_k)
-#
-#         if (observed_sum < final_node) or (observed_sum > final_node*6):
-#             return 0
-#
-#         prob_sum = 0
-#         sum_index = observed_sum - final_node # Gives appropriate index
-#         for state in range(self.num_states):
-#             prob_sum += tablesum[state][sum_index]
-#         return prob_sum
+    def calculate_conditional(self, k, s, observations_list):
+        """Calculates the conditional probability: p(x_k, z_k | S, O_{1:T}).
 
-    # def prob_sum(self, observed_sum, current_node, final_node, prev_tablesum, observations_list, z_k):
-    #     observation = observations_list.pop()
-    #     transition_matrix = copy.deepcopy(self.transition_matrix) # Make sure to deep-copy!
-    #     evidence_matrix = copy.deepcopy(self.evidence_matrix)
-    #
-    #     # If we are given some information, adjust probabilities accordingly. Then continue as normal.
-    #     if (current_node == z_k[0]): # We are given this node...
-    #         given_state = z_k[1]
-    #         other_state = (given_state + 1) % 2
-    #         evidences = [0]*6
-    #         evidences[z_k[2]-1] = 1
-    #         for state in range(self.num_states):
-    #             transition_matrix[state][given_state] = 1
-    #             transition_matrix[state][other_state] = 0
-    #             evidence_matrix[state] = evidences
-    #     elif(observation != -1): # We are given an observation
-    #         evidences = [0]*6
-    #         evidences[observation-1] = 1
-    #         for state in range(self.num_states):
-    #             evidence_matrix[state] = evidences
-    #
-    #     current_tablesum = np.empty([self.num_states, current_node*6 - current_node + 1])
-    #     for state in range(self.num_states):
-    #         for target_sum in range(current_node, current_node*6+1):
-    #             target_sum_index = target_sum - current_node
-    #             current_tablesum[state][target_sum_index] = self._intermediate_prob(state,
-    #                                                                                 current_node,
-    #                                                                                 target_sum,
-    #                                                                                 prev_tablesum,
-    #                                                                                 transition_matrix,
-    #                                                                                 evidence_matrix)
-    #     # We are done.
-    #     if (current_node == final_node):
-    #         return current_tablesum
-    #
-    #     # Otherwise recurse forward
-    #     future_tablesum = self.prob_sum(observed_sum, current_node+1, final_node, current_tablesum, observations_list, z_k)
-    #     return future_tablesum
+        Finds the conditional probability of an observation x_k and state
+        z_k given the sum of all outcomes and a set of observations from each
+        time step/node in the HMM.
 
-    def _intermediate_prob(self, current_state, current_node, target_sum ,prev_tablesum, transition_matrix, evidence_matrix):
-        # (state, current_node, target_sum, prev_tablesum, transition_matrix, evidence_matrix)
+        Parameters
+        ----------
+        k : int
+            The node that we are interested in. A particular time step in the
+            sequence model.
+        s : int
+            The sum of all outcomes in the sequence.
+        observations_list : list
+            List of integers representing observations. Can be -1 or in (1,6).
+
+        Returns:
+            Table of probabilities with entries for each
+            (state, observation) pair.
+        """
+        num_outputs = len(self.evidence_matrix[0])
+        prob_table = np.zeros([self.num_states, num_outputs])
+        k = k - 1  # Make index friendly
+        for state in range(self.num_states):
+            for x in range(num_outputs):
+                joint_prob = self._calculate_joint(
+                    x+1, state, k, s, observations_list)
+                prob_table[state, x] = joint_prob
+        prob_table = prob_table / np.sum(prob_table)
+        return prob_table
+
+    def _calculate_joint(self, x_k, z_k, k, s, observations_list):
+        """Calculates the joint probability: p(X_k=x, Z_k=t, S=s, O_1:T).
+
+        Parameters
+        ----------
+        x_k : int
+            An observation related to state z_k.
+        z_k : int
+            The state of node k. Either 0 or 1.
+        k : int
+            The current timestep. Node number k.
+        s : int
+            The sum associated with all the T observations from the HMM.
+        observations_list : list
+            List of observations.
+
+        Returns:
+            Joint probability.
+        """
+        observations_list_cp = copy.deepcopy(observations_list)
+        past_observations = observations_list_cp[:k]
+        future_observations = observations_list_cp[k+1:]
+        current_observation = observations_list_cp[k]
+        # Case that cannot happen. I.e. O_k = 5 and X_k = 1
+        if (current_observation != -1) and (current_observation != x_k):
+            return 0
+        forward_value = self._semi_forward(past_observations, z_k)
+        prob_observation_k = self.prob_observation(current_observation, z_k)
+        backward_value = 1
+        if len(future_observations) != 0:
+            backward_value = self.backward(
+                future_observations, future_backward=[1, 1], target_state=z_k)
+        z_list = [-1 for i in range(len(observations_list_cp))]
+        z_list[k] = z_k
+        observations_list_cp[k] = x_k
+        prob_sum = self.prob_sum(s, observations_list_cp, z_list)
+        return forward_value * prob_observation_k * backward_value * prob_sum
+
+    def _intermediate_prob(self, current_state, current_node,
+                           target_sum, prev_tablesum, transition_matrix,
+                           evidence_matrix):
+        """Calculates probability of being in a state and observing a sum."""
         total_prob_sum = 0
         for prev_state in range(self.num_states):
-            # Loop over all possible sums in previous state
             for prev_sum in range(current_node-1, (current_node-1)*6+1):
                 # Subtract 1 to get into proper index
-                sum_index = prev_sum - (current_node-1)
-#                 print('Prev sum index: {}'.format(sum_index))
-                target_sum_index = target_sum - prev_sum - 1 # -1 for indexing...
+                sum_index = prev_sum - (current_node - 1)
+                target_sum_index = target_sum - prev_sum - 1
                 # Check if evidence is possible... a dice only has 6 sides
                 if (target_sum_index < 0) or (target_sum_index > 5):
                     total_prob_sum += 0
                 else:
-#                     print('Target sum index: {}'.format(target_sum_index))
-#                     print('Target sum --- : {}'.format(target_sum_index + 1))
-#                     print('Prev sum --- : {}'.format(prev_sum))
                     prob_previous_sum = prev_tablesum[prev_state][sum_index]
-                    transition_prob = transition_matrix[prev_state][current_state]
-                    evidence_prob = evidence_matrix[current_state][target_sum_index]
-                    total_prob_sum += prob_previous_sum * transition_prob * evidence_prob
+                    transition_prob = (
+                        transition_matrix[prev_state][current_state])
+                    evidence_prob = (
+                        evidence_matrix[current_state][target_sum_index])
+                    total_prob_sum += (
+                        prob_previous_sum * transition_prob * evidence_prob)
         return total_prob_sum
 
+    def find_prob_sum(self, current_node, prev_tablesum,
+                      observations_list, z_list):
+        """Runs the recursive algorithm to the table of probabilities.
 
-    def calculate_conditional(self, k, s, observations_list):
-        """ Calculates the cond. prob: p(X_k = x, Z_k = t | S_N, O_1:T)
-            k: Integer representing a specific time step. Must be between 1 and T.
+        Calculates and returns the table of probabilities specifying
+        probabilities of (state, sum) pairs.
         """
-#         # Basic Checks
-#         if (z_k > 1) or (z_k < 0):
-#             print('z_k must be between 0 and 1 but was found to be {}'.format(z_k))
-#             return
-        num_outputs = len(self.dice_dist1)
-        prob_table = np.zeros([self.num_states, num_outputs])
-
-        # 1 - Find joint we are interested in
-#         target_value = self._calculate_joint(x_k,z_k,k,s,observations_list)
-        target_value = 0
-
-        # 2 - Find sum over all combinations of X_k, Z_k (i.e. the marginalizer)
-        # total_sum = 0
-        k = k - 1 # Make index friendly
-        for state in range(self.num_states):
-            for x in range(num_outputs):
-                logging.debug("Current x being tested: {}".format(x))
-                result = self._calculate_joint(x+1,state,k,s,observations_list)
-                prob_table[state, x] = result
-                # total_sum += result
-
-        # Normalize probabilities
-        if np.sum(prob_table) == 0:
-            logging.warning("Sum of probs. are zero. Possibly underflow.")
-        prob_table = prob_table / np.sum(prob_table)
-
-        # if total_sum == 0:
-        #     total_sum = 1 # Avoids dividing by zero.
-
-        # prob_table = prob_table / total_sum
-        return prob_table
-
-        # 3 - Calculate cond. probability (marginalize)
-#         print('Final target value: {}'.format(target_value))
-#         print('Final Total sum: {}'.format(total_sum))
-#         if (target_value == 0): # Avoid 0 / 0
-#             return 0
-#         return target_value / total_sum
-
-    def _calculate_joint(self, x_k, z_k, k, s, observations_list):
-        """ Calculates joint prob: p(X_k=x, Z_k=t, S=s, O_1:T)
-
-            Variables:
-            k: Integer representing a specific time step. Must be between 0 and T-1.
-            z_k: Integer representing state {0,1}
-
-        """
-        observations_list_cp = copy.deepcopy(observations_list)
-
-        # 1 - Partition observations according to time step 'k'
-        past_observations = observations_list_cp[:k]
-        future_observations = observations_list_cp[k+1:]
-        current_observation = observations_list_cp[k]
-
-        # 2 - Run all algorithms seperately
-        logging.debug('Past obs: {}'.format(past_observations))
-        logging.debug('Target_state = {}'.format(z_k))
-
-        # Case that cannot happen. I.e. O_k = 5 and X_k = 1 are mutually exclusive events
-        if (current_observation != -1) and (current_observation != x_k):
-            logging.debug('Emission O_K != Evidence X_K -> All prob will be zero')
-            return 0
-
-        # forward_value = self.semi_forward(past_observations, state) # check what it returns...
-        # prob_observation_k = self.prob_observation(current_observation, state)
-        # alpha_k = forward_value * prob_observation_k
-
-        forward_value = self.semi_forward(past_observations, z_k)
-        prob_observation_k = self.prob_observation(current_observation, z_k)
-        # emission_value = self.emmission(current_observation, x_k, z_k)
-
-        backward_value = 1
-        if len(future_observations) != 0:
-            backward_value = self.backward(future_observations, future_backward=[1,1], target_state=z_k)
-
-        logging.debug('Target_observation = {}'.format(current_observation))
-        logging.debug('Target_evidence = {}'.format(x_k))
-
-        logging.debug("OBS List: {}".format(observations_list_cp))
-
-        z_list = [-1] * len(observations_list_cp)
-        z_list[k] = z_k
-        observations_list_cp[k] = x_k
-
-        prob_sum = self.find_sum(s, observations_list_cp, z_list)
-        # sum_value = self.find_prob_sum(observed_sum=s, final_node=len(observations_list),
-        #                                observations_list=copy.deepcopy(observations_list), z_k=(k, z_k, x_k))
-
-        logging.debug('Sum_value is : {}'.format(prob_sum))
-        logging.debug('Emission Value is: {}'.format(prob_observation_k))
-        logging.debug('Backward value is : {}'.format(backward_value))
-        logging.debug('Forward Value is : {}'.format(forward_value))
-
-        # 3 - Multiply all values and return
-        return forward_value * prob_observation_k * backward_value * prob_sum
-
-    def prob_sum_alt(self, current_node, prev_tablesum, observations_list, z_list):
-        transition_matrix = copy.deepcopy(self.transition_matrix)
-        evidence_matrix = copy.deepcopy(self.evidence_matrix)
-
         observation = observations_list.pop()
         z_k = z_list.pop()
-        logging.debug("Remaining Z_List : {}".format(z_list))
-        logging.debug("Remaining Obs: {}".format(observation))
-        # Perform two Checks
-        if (z_k != -1): # Adjust transition probabilities
+        transition_matrix, evidence_matrix = self._setup_matrices(
+            z_k, observation)
+        current_tablesum = np.empty(
+            [self.num_states, current_node*6 - current_node + 1])
+        for state in range(self.num_states):
+            for target_sum in range(current_node, current_node*6+1):
+                target_sum_index = target_sum - current_node
+                prob = self._intermediate_prob(
+                    state, current_node, target_sum,
+                    prev_tablesum, transition_matrix, evidence_matrix)
+                current_tablesum[state][target_sum_index] = prob
+
+        if (len(observations_list) == 0):  # We are done
+            return current_tablesum
+        future_tablesum = self.find_prob_sum(
+            current_node+1, current_tablesum, observations_list, z_list)
+        return future_tablesum
+
+    def _setup_matrices(self, z_k, observation):
+        """Sets up and adjusts transition and evidence matrices.
+
+        If an observation or state (z_k) is known, then this affects the
+        transition and evidence probability tables of the HMM respectively.
+        """
+        transition_matrix = copy.deepcopy(self.transition_matrix)
+        evidence_matrix = copy.deepcopy(self.evidence_matrix)
+        if (z_k != -1):
             given_state = z_k
             other_state = (given_state + 1) % 2
-            logging.debug("Given state: {}".format(z_k))
-            logging.debug("Other state: {}".format(other_state))
-
             for state in range(self.num_states):
                 transition_matrix[state][given_state] = 1
                 transition_matrix[state][other_state] = 0
-        if (observation != -1): # Adjust evidences
+        if (observation != -1):
             evidences = [0]*6
             evidences[observation-1] = 1
             for state in range(self.num_states):
                 evidence_matrix[state] = evidences
-        logging.debug("Observation: {}".format(observation))
-        logging.debug("Evidence matrix: {}".format(evidence_matrix))
+        return transition_matrix, evidence_matrix
 
-        # Calculate sums
-        current_tablesum = np.empty([self.num_states, current_node*6 - current_node + 1])
-        for state in range(self.num_states):
-            for target_sum in range(current_node, current_node*6+1):
-                target_sum_index = target_sum - current_node
-                prob = self._intermediate_prob(state, current_node, target_sum, prev_tablesum, transition_matrix, evidence_matrix)
-                current_tablesum[state][target_sum_index] = prob
+    def prob_sum(self, observed_sum, observations_list, z_list):
+        """Calculates the probability of a sum given states and observations.
 
-        logging.debug("Current table sum: {}".format(current_tablesum))
-        # We are done.
-        if (len(observations_list) == 0):
-            logging.debug("######### DONE #######")
-            return current_tablesum
+        Finds the probability: p(S | O_{1:k}, z_list). That is, the probability
+        of a sum given a set of known observations and a set of known states.
 
-        # Otherwise recurse forward
-        future_tablesum = self.prob_sum_alt(current_node+1, current_tablesum, observations_list, z_list)
-        return future_tablesum
+        Parameters
+        ----------
+        observed_sum : int
+            The sum of interest.
+        observations_list : list
+            List of observations associated with each state in z_list.
+            The observations are integers and can be in the range (-1,6). A
+            -1 indicates that the observation is hidden.
+        z_list : list
+            Contains integers representing HMM states. If -1, then it means
+            state is not known. Integers 0 and 1 represent actual known states.
 
-    def find_sum(self, observed_sum, observations_list, z_list):
-        """ Calculates P(Sum_k | O_1:k, Zks)
-
-        Variables:
-            observed_sum: Sum that we are interested in
-            final_node: Integer value representing how many time steps to consider
-            observations_list: List of observations from time period 1:K.
-            z_list: List of states Z_k
-            z_k: Triplet in form (k, z_k, x_k). k specifying time step, z_k state of node z_k and x_k the outcome at time step k.
+        Returns:
+            Probability of the sum.
         """
-        # # Basic checks.
-        # if (final_node > len(observations_list)):
-        #     print('Error in input. Value of final_node: {0} > total number of nodes: {1}'.format(final_node, len(observations_list)))
-        #     return
-        # if (z_k[0] > len(observations_list)) or (z_k[0] < 1):
-        #     print('Value of k in z_k triple must be between 1 and T')
-        #     return
-        # if (z_k[1] > 1) or (z_k[1] < 0):
-        #     print('Value of z_k was : {} but must be between 0 and 1'.format(z_k[1]))
-        #     return
-
         num_nodes = len(observations_list)
         if (observed_sum < num_nodes) or (observed_sum > num_nodes*6):
             return 0
 
         observations_list.reverse()
         z_list.reverse()
-
-        observation_k = observations_list.pop() # Pop last element which is now first from reverse
+        observation_k = observations_list.pop()
         z_k = z_list.pop()
-
-        # Initialize algorithm
-        init_tablesum = copy.deepcopy(self.evidence_matrix) # Make deepcopy
-        logging.debug('#'*20)
-        logging.debug("Init Tablesum: {}".format(init_tablesum))
-        if (observation_k != -1): # O_k = {1,2,...,6}
+        # Initialize table for algorithm
+        init_tablesum = copy.deepcopy(self.evidence_matrix)
+        if (observation_k != -1):
+            evidences = [0]*6
+            evidences[observation_k-1] = 1
             for state in range(self.num_states):
-                evidences = [0]*6
-                evidences[observation_k-1] = 1
                 init_tablesum[state] = evidences
-        if (z_k != -1): # z_k = {0,1}
+        if (z_k != -1):
             other_state = (z_k + 1) % 2
             init_tablesum[other_state] = [0]*6
-        else: # z_k = ?
-            for state in range(self.num_states): # Include transition probabilities
-                init_tablesum[state] = [x * self.starting_prior[state] for x in init_tablesum[state]]
+        else:
+            for state in range(self.num_states):
+                init_tablesum[state] = (
+                    [x * self.starting_prior[state] for x in init_tablesum[state]])
 
         if len(observations_list) == 0:
             tablesum = init_tablesum
         else:
             current_node = 2
-            logging.debug("Tablesum before entering sum_alt_table: {}".format(init_tablesum))
-            tablesum = self.prob_sum_alt(current_node, init_tablesum, observations_list, z_list)
-
+            tablesum = self.find_prob_sum(
+                current_node, init_tablesum, observations_list, z_list)
         sum_index = observed_sum - num_nodes
-        # prob_table = np.zeros(self.num_states)
-        logging.debug("Table sum shape {} and {}".format(tablesum.shape, tablesum))
-        logging.debug("Sum_index is: {}".format(sum_index))
-        logging.debug('#'*20)
-        # prob_table[0] = tablesum[0][sum_index]
-        # prob_table[1] = tablesum[1][sum_index]
-
-        # Sum up probs (since if z_k =1 was given, this will be reflected in transitions and sum will have no effect)
-        # If not given, then summing is correct as well.
         tablesum = np.sum(tablesum, axis=0)
         prob = tablesum[sum_index]
-
         return prob
-        # Returns prob(S = 18 | Z = 0) and prob(S=18 | Z=1)
 
     def sample_z_k(self, z_list, observations_list, observed_sum):
-        """Samples from distribution: p(z_k | S, O_1:k)
-        args:
-            z_k: Tuple (k, value) representing state of z_k ## change to dict?
-            observations_list: List of observations 1:K
+        """Samples a state of the HMM given some information.
+
+        Formally, this function implements logic that samples a state 'z_k'
+        from either the distribution p(z_k | S, O_{1:k}) or from
+        p(z_{k-1} |z_k, S, O_{1:k}).
+
+        Parameters
+        ----------
+        z_list : list
+            Contains integers representing HMM states. If -1, then it means
+            state is not known. Integers 0 and 1 represent actual known states.
+        observations_list : list
+            List of observations associated with each state in z_list.
+        observed_sum : int
+            The sum of all observations in the observations_list.
+
+        Returns:
+            z_list: Updated z_list containing a new state for the last unknown
+            state in the list prior to calling the function.
+            condit_prob: np array containing the probabilities associated with
+            the sampled state.
         """
+        # Find the last unknown state in z_list.
         k = -1
         for i in range(1, len(z_list)+1):
-            logging.debug(-i)
             if z_list[-i] == -1:
-                logging.debug("Success: {}".format(i))
                 k = -i
                 break
 
         probability_table = np.zeros(self.num_states)
         for state in range(self.num_states):
             observations_list_cp = copy.deepcopy(observations_list)
-            ## Partition observation List into two depending on k
             current_observation = observations_list_cp[k]
             past_observations = observations_list_cp[:k]
             if k + 1 == 0:
                 future_observations = []
             else:
                 future_observations = observations_list_cp[k+1:]
-
-            # Calculate prob. sum
+            # Find probability of past observations and states
             z_list[k] = state
-            logging.debug('K is: {}'.format(k))
-            logging.debug("Z_list is: {}".format(z_list))
-            prob_sum = self.find_sum(observed_sum, observations_list_cp, copy.deepcopy(z_list))
-
-            # Calculate alpha_z_k
-            forward_value = self.semi_forward(past_observations, state) # check what it returns...
-            prob_observation_k = self.prob_observation(current_observation, state)
+            prob_sum = self.prob_sum(
+                observed_sum, observations_list_cp, copy.deepcopy(z_list))
+            forward_value = self._semi_forward(past_observations, state)
+            prob_observation_k = self.prob_observation(
+                current_observation, state)
             alpha_k = forward_value * prob_observation_k
-
-            # Calculate futures (if there are any)
+            # Find probability of future obserations and states
             future_prob = 1
             prev_state = state
             if len(future_observations) != 0:
                 for i in range(len(future_observations)):
                     future_obs = future_observations[i]
                     future_state = z_list[k+i+1]
-                    prob_observation = self.prob_observation(future_obs, future_state)
-                    transition_prob = self.transition_matrix[prev_state][future_state]
-
+                    prob_observation = self.prob_observation(
+                        future_obs, future_state)
+                    transition_prob = (
+                        self.transition_matrix[prev_state][future_state])
                     future_prob *= prob_observation * transition_prob
                     prev_state = future_state
-
-            logging.debug("alpha_k : {}".format(alpha_k))
-            logging.debug("prob_sum: {}".format(prob_sum))
-            logging.debug("future_prob: {}".format(future_prob))
             probability_table[state] = alpha_k * prob_sum * future_prob
-
-        # Normalize
-        logging.debug("Un-normalized prob table: {}".format(probability_table))
         condit_prob = probability_table / np.sum(probability_table)
-
-        # Sample
-        logging.debug("Cond prob table: {}".format(condit_prob))
-        # # sampled_state = np.random.multinomial(1, condit_prob)
-        # logging.debug("State sample: {}".format(sampled_state))
-        # # z_k = np.argmax(sampled_state)
-        z_k = np.argmax(condit_prob) # Choose most likely state
-        logging.debug("Sampled Z_K: {}".format(z_k))
+        z_k = np.argmax(condit_prob)
         z_list[k] = z_k
         return z_list, condit_prob
 
     def sample_states(self, observations_list, observed_sum):
-        z_list = [-1 for x in observations_list]
-        prob_list = []
-        for i in range(len(z_list)):
-            logging.info('Z_LIST is: {}'.format(z_list))
-            z_list, prob_table = self.sample_z_k(z_list, observations_list, observed_sum)
-            prob_list.append(prob_table)
-            logging.info('PROB LIST is: {}'.format(prob_list))
+        """Samples the most likely sequence of states given observations.
 
+        Finds the set of states that are most likely given a set of
+        observations drawn from the hidden markov model. Formally this can be
+        regarded as sampling from p(Z_1, Z_2,..., Z_k | S, O_{1:k}), where
+        S is the observed sum and O_{1:k} are the observations.
+
+        Parameters
+        ----------
+        observations_list : list
+            List containing the observations from each state
+        observed_sum : int
+            The sum of all observations
+
+        Returns:
+            states_list: List containing the most likely states
+            prob_list: List containing the probabilities associated
+            with each state
+        """
+        states_list = [-1 for x in observations_list]
+        prob_list = []
+        # Samples states in reverse order. From k to 1.
+        for i in range(len(states_list)):
+            states_list, prob_table = self.sample_z_k(
+                states_list, observations_list, observed_sum)
+            prob_list.append(prob_table)
         prob_list.reverse()
-        return z_list, prob_list
+        return states_list, prob_list
